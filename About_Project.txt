@@ -1,0 +1,100 @@
+====================================================================
+JARVIS: AUTONOMOUS MULTI-MODAL AI ASSISTANT
+====================================================================
+
+1. WHAT IS THE PROJECT?
+--------------------------------------------------------------------
+Jarvis is a highly customized, ultra-low-latency, autonomous personal AI agent built specifically for a Windows environment. Unlike standard chatbots, Jarvis acts as a true digital companion that can see your screen, hear your voice, control your local operating system, remember personal facts forever, and be controlled remotely via your phone. It utilizes a "Hybrid Architecture" that balances the zero-cost privacy of local computing with the massive intelligence and speed of Cloud AI.
+
+2. TECHNOLOGIES, LIBRARIES, AND AI MODELS USED
+--------------------------------------------------------------------
+### AI Models & Their Specific Uses:
+1. Groq (Llama 3.1 70B): Used as the "Main Conversational Brain." Chosen for its LPU technology which provides hyper-fast (300+ tokens/sec) responses, ensuring zero latency during voice chats.
+2. NVIDIA NIM (Llama 3.2 Vision 11B): Used specifically for the "Desktop Screen Vision" feature. It is called upon only when Jarvis needs to analyze visual data from a screenshot.
+3. NVIDIA NIM (Qwen / Gemma): Used as high-speed secondary routers and summarizers, specifically handling the rapid YouTube transcript summarization.
+4. DeepSeek (DeepSeek-R1): Used as the "Reasoning Engine." Automatically routed to when the user asks a complex coding, math, or logic-heavy question that requires step-by-step thought.
+5. Google Gemini: Kept available as a powerful generalized fallback API.
+6. Ollama (Llama 3.1 8B): The "Offline Local Brain." Installed locally on the hardware. Jarvis automatically falls back to this model if the internet connection dies, ensuring he is never offline.
+7. Faster-Whisper (small.en): Used for Local Speech-to-Text (Hearing). Run locally on the CPU/GPU to completely bypass the latency of uploading large audio files to the cloud.
+8. Edge-TTS: Used for Cloud Text-to-Speech (Speaking). Chosen because it generates highly realistic human voices almost instantaneously compared to robotic local TTS engines.
+9. Sentence-Transformers (all-MiniLM-L6-v2): Used for Local Vector Embeddings. Converts user memories and tasks into numerical arrays locally, which are then pushed to MongoDB for Long-Term Memory.
+
+### Core Python Libraries:
+- OS Automation (The Claw): `pyautogui`, `pyperclip`, `pywhatkit`, `webbrowser`, `os`, `psutil`, `keyboard`.
+- Web Scraping: `playwright` (Headless Chromium scraping).
+- Long-Term Memory (RAG): `pymongo` (MongoDB Atlas), `numpy`.
+- Voice/Audio: `speech_recognition`, `pygame` (Threaded audio playback), `openwakeword`.
+- Remote Interface: `discord.py` (Custom "OpenClaw" integration).
+- Specialized APIs: `youtube-transcript-api`, `google-api-python-client`, `google-auth-oauthlib`.
+
+3. CORE ARCHITECTURE (WHAT IS IN IT?)
+--------------------------------------------------------------------
+The system is built on a concurrent, multi-threaded architecture:
+- Event Loop 1 (Discord): Runs the OpenClaw Discord bot 24/7 for remote access.
+- Thread 2 (Wake Word Worker): A background engine running `openwakeword` that constantly monitors for "Hey Jarvis" (adjusted to a 0.15 threshold to catch slangs/accents).
+- Thread 3 (Voice Worker): Listens to the microphone upon waking, utilizing Voice Activity Detection (VAD) to ignore background noise and 16kHz resampling for `faster-whisper`.
+- Thread 4 (TTS Worker): Processes text streams into audio and plays them using Pygame without freezing the main logic. Includes zero-latency queue purging for True Voice Interruption.
+- Action Controller: A heuristic router (`execute_computer_action`) that intercepts commands before they hit the AI. If a command requires physical action (like sending an email or scraping a website), it executes instantly.
+
+4. COMPLETE FEATURE SET (EVERYTHING IT CAN DO)
+--------------------------------------------------------------------
+- Multi-Brain Routing: Automatically selects the best LLM based on the prompt (e.g., Vision to NIM, Code to DeepSeek, Chat to Groq).
+- Hybrid Voice Engine & True Interruption: Combines Local STT and Cloud TTS. If the user interrupts Jarvis while speaking, he instantly flushes the TTS queue, halts the physical speaker, and employs an 0.8s acoustic reverb delay to prevent echo loops.
+- Headless Web Scraping: Jarvis can spin up an invisible Playwright Chromium browser, navigate to a URL, bypass strict DOM locators to extract raw text, and summarize entire websites autonomously.
+- Implicit Screen Awareness: Jarvis can take silent screenshots and route them to the NVIDIA Vision model. By listening for implicit pronouns like "What is this error?" or "Look at this", he automatically knows to analyze the screen.
+- Autonomous Background Emailing: Authenticated via OAuth2 and the Gmail API, Jarvis can write formal corporate emails and send them silently in the background without launching a browser or requiring UI interaction.
+- Media Orchestration: Injects OS-level `pyautogui` hooks to physically control Spotify and system media playback (play, pause, next track) with zero latency.
+- RAG Long-Term Memory: Converts your facts (e.g., "Remember my favorite coffee") into mathematical vectors and saves them to MongoDB. He retrieves these instantly to gain context in future conversations.
+- Discord "OpenClaw" Interface: You can text Jarvis from anywhere in the world using the Discord app, and he will execute commands on your home PC.
+- Google Calendar Engine: Authenticates via OAuth2 to read and report your upcoming schedule.
+- Autonomous YouTube Chaining: You can say "Open YouTube, play MrBeast, and summarize it." Jarvis will physically open the browser, play the video, wait 10 seconds, grab the URL from your clipboard, download the transcript, and provide a bullet-point summary.
+- WhatsApp Automation: Can search your local Desktop/Downloads folders, find a specific file, open WhatsApp Desktop, search for a contact, and send the file autonomously.
+- Hardware Diagnostics: Reads real-time CPU, RAM, Battery, and Disk usage using `psutil`.
+
+5. STRUGGLES, FAILURES, AND HOW WE OVERCAME THEM
+--------------------------------------------------------------------
+Struggle 1: Acoustic Echo & Voice Interruption
+- The Problem: When Jarvis was speaking, his microphone would pick up his own voice from the laptop speakers. If the user tried to interrupt him, the STT engine would transcribe a mix of the user's voice and Jarvis's last word, causing massive hallucinations. Furthermore, stopping the audio didn't clear the TTS backlog, so he would just start speaking the next sentence.
+- The Fix: We re-engineered the `stop_speaking` function to instantly purge the entire asynchronous `queue.Queue` of pending sentences. We then added an 0.8-second hardware sleep delay immediately after halting the audio, ensuring the acoustic reverb in the room completely faded before re-calibrating the microphone.
+
+Struggle 2: Playwright Strict Mode Violations
+- The Problem: When trying to scrape complex websites like MSN, Playwright would crash with a "Strict Mode Violation" because the website contained multiple `<body>` tags (due to iframes and ads).
+- The Fix: We bypassed Playwright's strict locator rules by injecting raw JavaScript `page.evaluate("document.body.innerText")`, forcing the browser to forcefully rip all visible text regardless of the DOM complexity.
+
+Struggle 3: TTS Freezing & Markdown Crashing
+- The Problem: Edge-TTS would randomly throw "No audio was received" errors and crash the thread if the LLM generated an emoji or markdown formatting (like `**bold**`).
+- The Fix: We built a sanitization pipeline inside `speak_streaming` to strip `*`, `#`, and `_`, and explicitly verified that the chunk contained alphanumeric characters before sending it to the Microsoft API.
+
+Struggle 4: OpenClaw Discord Timeouts & Input Blocking
+- The Problem: When triggering web scraping via Discord, the Python `input()` function would fire in the local terminal, completely freezing the Discord bot because it was waiting for someone to type on the physical keyboard.
+- The Fix: We updated the Action Controller to accept an `is_discord` flag. If the command originated from Discord, it bypasses the `input()` block and gracefully replies back in the chat asking for the URL.
+
+Struggle 5: Vector Database Complexity
+- The Problem: Setting up a dedicated Vector Database for Long-Term Memory was too complex and overkill for personal use. The default python certificates also blocked the connection with a TLSV1 error.
+- The Fix: We utilized the free tier of MongoDB Atlas. We bypassed the TLS error by overriding the local certificate verifications (`tlsAllowInvalidCertificates=True`). We embedded the data locally using `sentence-transformers` and calculated Cosine Similarity locally using `numpy`, resulting in <10ms retrieval times with zero cost!
+
+6. EXECUTION FLOW (HOW IT WORKS END-TO-END)
+--------------------------------------------------------------------
+1. Boot Sequence: `jarvis.py` initializes all API clients. It loads the `all-MiniLM-L6-v2` model for memory embeddings and spins up the `faster-whisper` STT model on the GPU/CPU. It then starts the Discord background event loop and the Pygame TTS audio queue.
+2. Listening: The `openwakeword` thread constantly monitors the microphone at a 0.15 threshold. When you say "Jarvis" (or any slang equivalent like "Zarvis"), it unlocks the STT thread to transcribe your specific command.
+3. Heuristic Action Controller: Your prompt hits `execute_computer_action`. This engine checks for hardcoded trigger words (e.g., "pause the music", "scrape this website", "send an email"). If a match is found, Python directly executes the OS-level script (like `pyautogui` hooks or Playwright scraping) and returns a text summary immediately, bypassing the slow AI brain.
+4. Memory Injection: If it's a conversational prompt, the system converts your text into a Vector and searches MongoDB for similar past facts. If found, it covertly injects these facts into the System Prompt.
+5. Smart Routing: `determine_route()` decides which LLM to use. A coding question goes to DeepSeek. A visual phrase like "What is this error?" triggers an implicit screenshot and routes to NVIDIA NIM Llama Vision. General chat goes to Groq. If offline, it routes to Ollama.
+6. Execution & Speaking: The chosen LLM streams text back token-by-token. As soon as a full sentence is formed (detected by `. ! ?`), the sentence is sent to Edge-TTS. Edge-TTS generates an audio byte-stream and pushes it to the Pygame Thread, meaning Jarvis starts speaking the first sentence while he is still generating the second sentence!
+
+7. PREREQUISITE SETUP FOR DEPLOYMENT
+--------------------------------------------------------------------
+To run this project from scratch on a new Windows machine:
+1. Python Environment: Install Python 3.10+ and run `pip install -r requirements.txt` (requires `torch`, `faster-whisper`, `playwright`, `psutil`, `edge-tts`, `pymongo`, `google-api-python-client`, `pyautogui`, etc). Run `playwright install chromium`.
+2. API Keys: Create a `.env` file in the root directory. You must acquire and insert keys for: Groq, NVIDIA NIM, Gemini, and DeepSeek.
+3. MongoDB Atlas: Create a free MongoDB Atlas cluster, create a database named `jarvis_brain`, and paste the Connection URI into the `.env` file.
+4. Discord Bot: Create an application on the Discord Developer Portal, enable all Intents, generate a Bot Token, invite the bot to your server, and paste the Token into the `.env` file.
+5. Google APIs: Enable the Calendar and Gmail APIs in Google Cloud Console, download the OAuth `credentials.json`, and place it in the project root. Run the script once to authenticate and generate `token.pickle`.
+6. Ollama: Install Ollama locally and pull the `llama3.1:8b` model for offline fallback.
+
+8. FUTURE SCOPE & POTENTIAL IMPROVEMENTS
+--------------------------------------------------------------------
+- IoT Smart Home Control: Integrating `tinytuya` or `phue` libraries to allow Jarvis to physically control real-world lights, fans, and smart plugs via network commands.
+- Advanced Computer Vision: Upgrading from static screenshots to a continuous, real-time OpenCV video stream analysis so Jarvis can "watch" you work and proactively offer suggestions without being prompted.
+- Action Chaining (Multi-Step Logic): Building an Agentic Loop so he can execute multiple physical commands in a row autonomously (e.g., "Scrape this website, write an essay on it, save it as a PDF, and email it to Sunny").
+- Voice Biometrics: Training an audio biometric model specifically on the user's voice profile so Jarvis ignores commands spoken by anyone else in the room.
