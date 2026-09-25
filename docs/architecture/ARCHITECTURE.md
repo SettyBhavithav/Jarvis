@@ -4,91 +4,12 @@
 
 ## 1. High-Level Architectural Topology
 
-JARVIS V2 is designed as an **Autonomous Multimodal AI Agent OS** operating on a hybrid edge-cloud paradigm:
-
-```mermaid
-flowchart TD
-    %% Input Channels
-    subgraph Inputs ["1. Input Gateway & Event Ingestion"]
-        V[🎙️ Voice: 16kHz PyAudio]
-        D[📱 Discord: OpenClaw Daemon]
-        API[🌐 Internal REST API]
-    end
-
-    %% Central State & Event Bus
-    subgraph Core ["2. Central State & Orchestration"]
-        EB[⚡ Typed EventBus]
-        RS[🧠 Runtime State Machine]
-        CM[📜 Context Manager & SOUL]
-    end
-
-    Inputs --> EB
-    Inputs --> RS
-    Inputs --> CM
-
-    %% Router & Intelligence Gateway
-    subgraph Gateway ["3. Model Gateway & Health System"]
-        IR[🧭 Intelligent Intent Router]
-        CB[🚨 Circuit Breaker & Fallback]
-        Groq[⚡ Groq LPU]
-        NIM[👁️ NVIDIA NIM Vision & Gemma]
-        DS[🔬 DeepSeek R1 Reasoning]
-        Gemini[🌐 Google Gemini 2.0 Flash]
-        Ollama[📴 Ollama Offline llama3.1:8b]
-    end
-
-    CM --> IR
-    IR --> CB
-    CB --> Groq & NIM & DS & Gemini & Ollama
-
-    %% Security & Policy Engine
-    subgraph Security ["4. Security & Policy Gatekeeper"]
-        PE[🛡️ Policy Engine Levels 0-4]
-        CMgr[✍️ Explicit Confirmation Manager]
-        PID[🔒 Prompt Injection Context Isolator]
-    end
-
-    IR --> PE
-    PE -->|Level 3 & 4 Actions| CMgr
-    PE --> PID
-
-    %% Tool Execution & Claw V2
-    subgraph Tools ["5. Typed Tool Registry ('The Claw V2')"]
-        TR[📦 Tool Registry]
-        Diag[📊 System Diagnostics]
-        Media[🎵 Spotify & Volume]
-        Mail[📧 Background Gmail API]
-        WA[💬 WhatsApp Desktop]
-        Playwright[🕷️ Headless Web Scraper]
-        Vis[👁️ Screen Vision]
-        YT[📺 YouTube Transcript & Summary]
-    end
-
-    PE -->|Authorized| TR
-    TR --> Diag & Media & Mail & WA & Playwright & Vis & YT
-
-    %% Memory Layer
-    subgraph Storage ["6. Persistence & Memory (Supabase pgvector)"]
-        Supa[⚡ Supabase PostgreSQL]
-        PGV[🧬 pgvector 384-dim Index]
-        LocalCache[💾 SQLite Vector Fallback Cache]
-        KG[🕸️ Knowledge Graph]
-    end
-
-    CM <--> Supa & PGV & LocalCache & KG
-
-    %% Streaming Voice Output
-    subgraph Output ["7. Streaming Voice Output & Barge-In"]
-        SC[✂️ Sentence Chunker]
-        TTS[🔊 Edge-TTS: en-US-GuyNeural]
-        Mixer[🎧 Pygame Mixer Queue]
-        Interrupt[🛑 0.8s Reverb Decay Barge-In]
-    end
-
-    Gateway --> SC --> TTS --> Mixer
-    Mixer -.->|Echo Bleed| V
-    V --> Interrupt --> Mixer
-```
+<div align="center">
+  <img src="jarvis_v2_architecture.png" alt="JARVIS V2 Master Architecture Diagram" width="100%" />
+  <p><em>Figure 1: JARVIS V2 Master Architecture Specification</em></p>
+  <img src="jarvis_v2_workflow.png" alt="JARVIS V2 Workflow Diagram" width="100%" />
+  <p><em>Figure 2: JARVIS V2 End-to-End Workflow Pipeline</em></p>
+</div>
 
 ---
 
