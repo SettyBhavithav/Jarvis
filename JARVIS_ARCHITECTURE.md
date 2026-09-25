@@ -6,6 +6,13 @@ This document provides the authoritative architecture and system design specific
 
 ## 1. High-Level System Architecture
 
+<div align="center">
+  <img src="docs/architecture/jarvis_v2_architecture.png" alt="JARVIS V2 Master Architecture Diagram" width="100%" />
+  <p><em>Figure 1: JARVIS V2 Master Architecture Diagram</em></p>
+  <img src="docs/architecture/jarvis_v2_workflow.png" alt="JARVIS V2 End-to-End Workflow Diagram" width="100%" />
+  <p><em>Figure 2: JARVIS V2 End-to-End Workflow Diagram</em></p>
+</div>
+
 JARVIS V2 is engineered around an asynchronous, event-driven orchestration loop that connects multi-modal user interfaces, native ReAct planning, resilient model routing, and persistent database storage.
 
 ```

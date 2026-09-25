@@ -36,6 +36,10 @@ JARVIS is built on a **hybrid edge-cloud architecture** where **Supabase Postgre
 
 ## Architecture
 
+<div align="center">
+  <img src="docs/architecture/jarvis_v2_architecture.png" alt="JARVIS V2 Master Architecture" width="100%" />
+</div>
+
 JARVIS V2 operates on a decoupled, event-driven architecture connecting sensory inputs to an autonomous reasoning core and authoritative storage:
 
 ```
