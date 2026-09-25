@@ -1,7 +1,38 @@
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Environment variables & secrets
 .env
+*.env
+.env.*
+!.env.example
 credentials.json
 token.pickle
+*.pickle
+
+# Databases & local caches
 memory.json
+*.db
+*.sqlite
+*.sqlite3
+jarvis_local_cache.db
+
+# Test & IDE artifacts
+.pytest_cache/
 .vscode/
+.idea/
+.venv/
+env/
+venv/
+
+# Build & packaging
+*.egg-info/
+build/
+dist/
+
+# Logs
+logs/
+*.log
+
+

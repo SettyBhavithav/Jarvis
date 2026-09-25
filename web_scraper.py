@@ -1,9 +1,18 @@
 import re
 import time
-from playwright.sync_api import sync_playwright
-import google.genai as genai
-from google.genai import types
 import os
+
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    sync_playwright = None
+
+try:
+    import google.genai as genai
+    from google.genai import types
+except ImportError:
+    genai = None
+    types = None
 
 def extract_url(text):
     """Finds the first URL in a string."""

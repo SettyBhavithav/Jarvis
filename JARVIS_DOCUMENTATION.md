@@ -10,9 +10,9 @@ JARVIS is not a standard chatbot. He operates using a **Dynamic Heuristic Router
 
 ## 2. Long-Term Memory System (RAG)
 Jarvis possesses true long-term memory. He does not rely on massive context windows that clear out when the script restarts.
-* **Vector Database:** Utilizes **MongoDB Atlas**.
-* **Embedding Model:** Uses local `sentence-transformers` (`all-MiniLM-L6-v2`) to encode user preferences, daily routines, and specific project details into mathematical vectors.
-* **Recall Mechanism:** During a conversation, Jarvis performs a cosine similarity search against the vector database to inject relevant past memories into his prompt natively, creating a persistent, evolving relationship with the user.
+* **Vector Database:** Utilizes **Supabase PostgreSQL with pgvector** and local SQLite vector cache for guaranteed zero-downtime offline continuity.
+* **Embedding Model:** Uses local `sentence-transformers` (`all-MiniLM-L6-v2`) to encode user preferences, daily routines, and specific project details into 384-dimensional dense vectors.
+* **Recall Mechanism:** During a conversation, Jarvis performs cosine similarity and hybrid reranked retrieval against the pgvector store to inject relevant past memories into his prompt natively, creating a persistent, evolving relationship with the user.
 
 ## 3. Advanced Voice Architecture
 The voice system was engineered from scratch to mimic true human interaction, prioritizing speed, accuracy, and interruptibility.

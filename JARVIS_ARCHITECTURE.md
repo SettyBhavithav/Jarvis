@@ -1,157 +1,313 @@
-# JARVIS: Comprehensive Master Architecture (Deep-Dive Edition)
+# JARVIS V2: Master Architecture & System Design Documentation
 
-This diagram exposes every single minute detail of the Jarvis project including every model, library, API, thread, and process — from boot to shutdown.
+This document provides the authoritative architecture and system design specification for **JARVIS V2** (*Autonomous Multimodal AI Agent OS*).
 
-Paste this into **[mermaid.live](https://mermaid.live)** or install the **Mermaid Preview** VS Code extension to render it.
+---
+
+## 1. High-Level System Architecture
+
+JARVIS V2 is engineered around an asynchronous, event-driven orchestration loop that connects multi-modal user interfaces, native ReAct planning, resilient model routing, and persistent database storage.
+
+```
+                           +----------------------------------------+
+                           |          User Input Channels           |
+                           |  [Voice / Mic] [Discord] [REST API]   |
+                           +----------------------------------------+
+                                                |
+                                                v
+                           +----------------------------------------+
+                           |              Orchestrator              |
+                           |   Session Context & Stream Dispatcher  |
+                           +----------------------------------------+
+                                                |
+                                                v
+                           +----------------------------------------+
+                           |         Native ReAct / Planner         |
+                           |  Decomposition, Goal Tracking, Memory  |
+                           +----------------------------------------+
+                                                |
+                                                v
+                           +----------------------------------------+
+                           |          Unified Model Gateway         |
+                           |  Groq LPU | NIM | DeepSeek | Gemini    |
+                           |     Circuit Breaker & Fallback         |
+                           +----------------------------------------+
+                                                |
+                        +-----------------------+-----------------------+
+                        |                                               |
+                        v                                               v
+        +-------------------------------+               +-------------------------------+
+        |    Tool Execution & The Claw  |               |       Direct Generation       |
+        |  Pydantic Validated Schemas   |               |   Streaming Text / Voice      |
+        +-------------------------------+               +-------------------------------+
+                        |                                               |
+                        v                                               |
+        +-------------------------------+                               |
+        |    Verification & Recovery    |                               |
+        | Goal Preserving Replanning    |                               |
+        +-------------------------------+                               |
+                        |                                               |
+                        +-----------------------+-----------------------+
+                                                |
+                                                v
+                           +----------------------------------------+
+                           |    Storage, Memory & Scheduler Core    |
+                           +----------------------------------------+
+                                   |                        |
+        [AUTHORITATIVE TRUTH]      v                        v      [LOCAL RESILIENCE]
+                 +-----------------------+    +-----------------------+
+                 | Supabase PostgreSQL   |    | Local SQLite Cache    |
+                 | - GoTrue Auth & RLS   |    | - Offline Queue       |
+                 | - pgvector Embeddings |    | - Fallback Resilience |
+                 | - Tasks & Schedules   |    +-----------------------+
+                 | - Knowledge Graph     |
+                 +-----------------------+
+```
+
+---
+
+## 2. Security Architecture & Identity Isolation
+
+JARVIS V2 adheres to a strict zero-trust security perimeter. End-user identities are never derived from untrusted client parameters; all persistent access is mediated via cryptographically signed JWTs and enforced directly inside PostgreSQL via Row-Level Security (RLS).
+
+```
+                            User Request / Command
+                                      │
+                                      ▼
+                           Bearer JWT Access Token
+                                      │
+                                      ▼
+                        Supabase GoTrue Authentication
+                                      │
+                                      ▼
+                            Verified User Identity
+                                 (auth.uid())
+                                      │
+                                      ▼
+                        PostgreSQL Row-Level Security
+                   (tenant isolation enforced in database)
+                                      │
+                                      ▼
+                              User-Owned Data
+              (memories, documents, tasks, schedules, audit)
+```
+
+### Security Tenets
+1. **JWT-Propagated RLS:** Queries to Supabase execute under the context of the calling user's Bearer JWT. Row-Level Security policies evaluate `auth.uid() = user_id`, guaranteeing cross-tenant data isolation at the storage engine level.
+2. **Admin Privilege Isolation:** The `SUPABASE_SERVICE_ROLE_KEY` is strictly reserved for server-side initialization and automated test suite provisioning. It is never exposed client-side or utilized for routine user operations.
+3. **Execution Safety Gate (Policy Engine):** Actions are categorized by risk:
+   - **Level 0–2 (Read/Diagnostic):** Executed autonomously (e.g., system stats, calendar read).
+   - **Level 3–4 (Side-Effects/Destructive):** Require explicit user confirmation before execution (e.g., dispatching emails, deleting files, system shutdown).
+4. **Prompt Injection Containment:** Untrusted external content (web scrape output, YouTube transcripts) is encapsulated in strict delimiter boundaries (`<<<BEGIN_UNTRUSTED_EXTERNAL_DATA>>>`) before passing to neural models.
+
+---
+
+## 3. Database Architecture: Authoritative Truth vs. Local Cache
+
+Storage in JARVIS V2 is divided into two distinct tiers:
+
+```
+                            JARVIS V2 Storage
+                                    │
+                  ┌─────────────────┴─────────────────┐
+                  ▼                                   ▼
+        Supabase PostgreSQL                     Local SQLite
+        + pgvector + Auth                       Cache / Queue
+        + Row-Level Security                    Offline Resilience
+                  │                                   │
+                  ▼                                   ▼
+        AUTHORITATIVE PERSISTENT             LOCAL CLIENT CACHE
+             SOURCE OF TRUTH                 & EMBEDDED FALLBACK
+```
+
+### Authoritative Persistent Backend (Supabase PostgreSQL)
+Supabase is the primary, authoritative persistent store for all production workflows:
+- **`auth.users`:** Identity provider managing cryptographically verified JWT tokens.
+- **`memories`:** Long-term episodic and semantic memory with 384-dimensional vector embeddings (`ivfflat` cosine distance indexing).
+- **`documents`:** Ingested reference documents and chunks for knowledge retrieval with hybrid RRF search.
+- **`tasks`:** Persistent to-do items and execution status tracking.
+- **`scheduled_tasks`:** Cron and one-time reminders with atomic claim operations (`status='claimed'`) to prevent multi-worker race conditions.
+- **`memory_links`:** Directional knowledge graph relations (`User -[PREFERS]-> Theme`).
+- **`audit_logs`:** Append-only security audit trail recording actor, action, payload hash, and outcome.
+
+### Local SQLite Cache (`jarvis_local_cache.db`)
+SQLite serves strictly as an auxiliary resilience cache:
+- Provides offline caching when cloud connectivity is unavailable.
+- Maintains a local write-ahead queue that synchronizes upon cloud reconnection.
+- Powers fast, hermetic local testing without requiring external credentials.
+- **Note:** SQLite is never treated as a second authoritative database.
+
+---
+
+## 4. Autonomous Agent Architecture (ReAct Loop)
+
+The autonomous core executes a native Reasoning-Action (ReAct) cycle with goal-preserving recovery:
+
+```
+                          User Intent / Goal
+                                  │
+                                  ▼
+                         Autonomous Planner
+                     (Breaks down multi-step goal)
+                                  │
+                                  ▼
+                        Model Gateway Router
+                 (Selects model with tool-calling support)
+                                  │
+                                  ▼
+                         Native Tool Calling
+                 (Emits structured JSON tool arguments)
+                                  │
+                                  ▼
+                        Execution ("The Claw")
+               (Dispatches validated tool via Registry)
+                                  │
+                                  ▼
+                         Tool Observation
+                   (Captures execution stdout / data)
+                                  │
+                                  ▼
+                       Verification & Reflection
+                 ┌────────────────┴────────────────┐
+                 ▼                                 ▼
+             Success                            Failure
+                 │                                 │
+                 ▼                                 ▼
+         Proceed to Next Step            Goal-Preserving Recovery
+                 │                       (Adjusts parameters or
+                 │                        selects alternate tool)
+                 └────────────────┬────────────────┘
+                                  │
+                                  ▼
+                            Final Output
+                      (Formatted Voice & Chat)
+```
+
+### Self-Correction & Goal Preservation
+When a step fails (e.g., network error on web scraping or invalid search query), the agent does not abort the user's objective. The observation is fed back to the planner, which analyzes the error, adjusts query parameters or tool selection, and attempts recovery until completion or reaching the step limit.
+
+---
+
+## 5. Neural Model Gateway & Routing Roster
+
+The Model Gateway provides automatic capability classification, load-adaptive routing, circuit breakers, and provider fallback:
+
+```
+[User Request]
+       │
+       ▼
+[Model Router]
+       │
+       ├── Chat / Fast Intent  ──► Primary: Groq LPU (qwen/qwen3.8-27b)
+       │                              Fallback: NVIDIA NIM (nemotron-3.5-lightning-30b-a3b)
+       │
+       ├── Vision / Screen      ──► Primary: NVIDIA NIM (meta/llama-3.2-11b-vision-instruct)
+       │                              Fallback: Google Gemini (gemini-2.0-flash)
+       │
+       ├── Audio+Vision Multi  ──► NVIDIA NIM (microsoft/phi-4-multimodal-instruct)
+       │
+       ├── Code & Engineering   ──► Primary: DeepSeek (deepseek-ai/deepseek-chat)
+       │                              Fallback: NVIDIA NIM (nemotron-3-ultra-550b-a55b)
+       │
+       ├── Deep Reasoning       ──► Primary: DeepSeek (deepseek-ai/deepseek-reasoner)
+       │                              Fallback: NVIDIA NIM Reasoning
+       │
+       ├── Speech-to-Text (STT) ──► Primary: Groq LPU (whisper-large-v3-turbo) (~80ms)
+       │                              Fallback: Local faster-whisper (small.en)
+       │
+       └── Offline Fallback     ──► Local Ollama daemon (llama3.1:8b)
+```
+
+---
+
+## 6. Real-Time Voice & Audio Pipeline
+
+JARVIS V2 implements an ultra-low-latency, zero-leak audio pipeline designed for continuous operation:
 
 ```mermaid
-flowchart TD
-    %% ==========================================
-    %% 0. MODELS REFERENCE BLOCK
-    %% ==========================================
-    subgraph "All AI Models Used in This Project"
-        M1["🧠 Groq LPU: llama-3.1-70b-versatile | Fast Chat"]
-        M2["👁️ NVIDIA NIM: meta/llama-3.2-11b-vision-instruct | Screen Vision"]
-        M3["💻 NVIDIA NIM: meta/llama-3.1-8b-instruct | YouTube Summary"]
-        M4["🔬 DeepSeek: deepseek-chat & deepseek-reasoner | Code & Reasoning"]
-        M5["🌐 Google Gemini Pro | Fallback Brain"]
-        M6["📴 Ollama: llama3.1:8b | Offline Local Brain"]
-        M7["🎙️ faster-whisper: small.en | Speech-to-Text STT"]
-        M8["🔊 Microsoft edge-tts: en-US-GuyNeural | Text-to-Speech TTS"]
-        M9["🧬 sentence-transformers: all-MiniLM-L6-v2 | Local Vector Embeddings"]
-        M10["🛡️ Llama-Guard-4 | Safety Content Filtering"]
-        M11["👂 openwakeword: hey_jarvis ONNX | Wake Word Detection"]
-    end
+flowchart LR
+    Mic[🎙️ 16kHz PyAudio] --> OWW[👂 openwakeword ONNX\nhey_jarvis @ 0.15]
+    OWW -->|Triggered| VAD[Dynamic Normalization\n+ VAD Silence Filter]
+    VAD --> STT[⚡ Groq LPU STT\nwhisper-large-v3-turbo]
+    STT --> Agent[🧠 ReAct Core]
+    Agent --> TTS[🔊 Edge-TTS Streaming\nen-US-GuyNeural]
+    TTS --> Mixer[🎧 Pygame Audio Queue]
+    Mixer --> Speaker[Laptop Speakers]
 
-    %% ==========================================
-    %% 1. INITIALIZATION & AUTHENTICATION
-    %% ==========================================
-    subgraph "Phase 1: Boot & Authentication Layer"
-        Boot(("Boot jarvis.py")) --> Auth_Google["OAuth2: Google Calendar & Gmail API"]
-        Auth_Google --> Check_Token{"Check token.pickle"}
-        Check_Token -->|Valid| Load_Keys["Load .env Keys"]
-        Check_Token -->|Invalid| Gen_Token["Browser Auth -> Create token.pickle"] --> Load_Keys
-        Load_Keys -->|GROQ, NIM, GEMINI, DEEPSEEK, DISCORD| API_Clients["Initialize All Cloud API Clients"]
-    end
+    Speaker -.->|Acoustic Bleed| Mic
+    Mic -.->|User Barge-In| OWW
+    OWW -->|Interrupt| Cutoff[🛑 Instant Queue Flush\n+ 0.8s Reverb Decay Delay]
+    Cutoff --> Mixer
+```
 
-    %% ==========================================
-    %% 2. MODEL PRE-LOADING & THREADING
-    %% ==========================================
-    subgraph "Phase 2: Local Model Memory Loading"
-        API_Clients --> Embed_Load["Load all-MiniLM-L6-v2 on CPU for RAG Embeddings"]
-        API_Clients --> STT_Load["Load faster-whisper (small.en) on GPU/CPU with INT8/FP16"]
-        API_Clients --> SOUL_Load["Load SOUL.md into System Prompt Context"]
-        API_Clients --> MEM_Load["Load Past Chat History from MongoDB into Messages Array"]
-    end
+1. **Wake-Word Monitoring:** Runs in a dedicated daemon thread scanning at 16kHz for the `"hey_jarvis"` wake word with confidence threshold `0.15`.
+2. **Barge-In Interruption:** When the user speaks while JARVIS is responding, the wake word fires an immediate interrupt, halting the audio mixer and applying an `0.8s` acoustic decay pause to prevent feedback.
+3. **Low-Latency Speech Processing:** Transcriptions are dispatched to Groq's LPU-accelerated Whisper model, completing in ~80ms without exhausting local CPU/GPU memory.
 
-    subgraph "Phase 3: Concurrent Daemon Threads"
-        STT_Load --> Thread_TTS["Thread 1: Async Edge-TTS Pygame Audio Queue"]
-        STT_Load --> Thread_Discord["Thread 2: OpenClaw discord.py Event Loop"]
-        STT_Load --> Thread_OWW["Thread 3: openwakeword Wake Word Monitor"]
-    end
+---
 
-    %% ==========================================
-    %% 3. INPUT GATHERING
-    %% ==========================================
-    subgraph "Phase 4: Multi-Channel Input Processing"
-        Thread_Discord -->|User texts from phone| Discord_Recv["discord.on_message received"]
-        
-        Thread_OWW -->|PyAudio reads mic at 16kHz| OWW_Model["openwakeword ONNX Model: hey_jarvis"]
-        OWW_Model -->|Confidence Score > 0.15| Wake_Trigger["Set wake_word_event flag"]
+## 7. System Directory Layout
 
-        Wake_Trigger --> Mic_Open["SpeechRecognition: Calibrate Ambient Noise 0.5s"]
-        Mic_Open --> Audio_Capture["Listen: timeout=5s, phrase_time_limit=10s"]
-        Audio_Capture --> Resample["Resample to 16000Hz & Normalize Amplitude Max"]
-        Resample --> VAD["VAD Filter: min_silence_duration_ms=500"]
-        VAD --> Transcribe["faster-whisper: transcribe with beam_size=5"]
-        Transcribe -->|String| Input_Merge{{"Merge Input from both channels"}}
-        Discord_Recv -->|String| Input_Merge
-    end
-
-    %% ==========================================
-    %% 4. SAFETY CHECK
-    %% ==========================================
-    Input_Merge --> SafeCheck["Llama-Guard-4: check_safety()"]
-    SafeCheck -->|Harmful| Reject(("Block & Warn User"))
-    SafeCheck -->|Safe| Heuristic_Router
-
-    %% ==========================================
-    %% 5. HEURISTIC ACTION CONTROLLER
-    %% ==========================================
-    subgraph "Phase 5: The Claw - OS-Level Action Controller"
-        Heuristic_Router{"execute_computer_action: Keyword & Regex Match"}
-
-        Heuristic_Router -->|pause/next/mute music| Action_Media["pyautogui.press playpause / nexttrack / volumemute"]
-        Heuristic_Router -->|system status| Action_Diag["psutil: cpu_percent, virtual_memory, disk_usage, battery"]
-        Heuristic_Router -->|scrape website| Action_Scrape["playwright: chromium.launch headless=True"]
-        Action_Scrape --> DOM_Bypass["page.goto URL then page.evaluate document.body.innerText"]
-        DOM_Bypass --> Scrape_AI["LLM summarizes scraped text with user question"]
-        Heuristic_Router -->|send email| Action_Mail["google-auth + googleapiclient gmail v1"]
-        Action_Mail --> Base64_Mail["EmailMessage -> base64 encode -> service.users.messages.send"]
-        Heuristic_Router -->|open youtube| Action_YT["pywhatkit.playonyt + pyautogui autoplay click"]
-        Heuristic_Router -->|summarize video| Action_YT_Sum["youtube-transcript-api: get_transcript()"]
-        Action_YT_Sum --> YT_AI_Summarizer["NVIDIA NIM: meta/llama-3.1-8b-instruct -> bullet summary"]
-        Heuristic_Router -->|send file on whatsapp| Action_WA["os.walk Desktop+Downloads -> pywhatkit.sendwhatmsg_instantly"]
-        Heuristic_Router -->|check calendar| Action_Cal["googleapiclient: calendar.events.list timeMin=now"]
-        Heuristic_Router -->|add task / show tasks| Action_Tasks["pymongo: insert_one / find_all in tasks collection"]
-        Heuristic_Router -->|look at this / screen| Action_Vision["pyautogui.screenshot -> Base64 encode image"]
-        Action_Vision --> NIM_Vis["NVIDIA NIM: meta/llama-3.2-11b-vision-instruct"]
-    end
-
-    %% ==========================================
-    %% 6. LONG-TERM MEMORY (RAG)
-    %% ==========================================
-    Heuristic_Router -->|No OS command match| RAG_Query
-
-    subgraph "Phase 6: Long-Term RAG Memory Pipeline"
-        RAG_Query["all-MiniLM-L6-v2: encode user text to 384-dim vector"] --> RAG_Search[("MongoDB Atlas: jarvis_brain.memories collection")]
-        RAG_Search -->|numpy cosine_similarity > 0.3| RAG_Inject["Inject top-3 past memories into System Prompt"]
-        RAG_Inject --> Context_Builder["Build Final Prompt: SOUL.md + History + RAG + User Query"]
-    end
-
-    %% ==========================================
-    %% 7. MULTI-MODAL BRAIN ROUTING
-    %% ==========================================
-    Context_Builder --> AI_Router{"determine_route: Heuristic Intent Classifier"}
-
-    subgraph "Phase 7: Multi-Modal Cloud & Local Brains"
-        AI_Router -->|vision keywords| NIM_Vis
-        AI_Router -->|code/debug/python| Route_Code["DeepSeek API: deepseek-chat / deepseek-reasoner"]
-        AI_Router -->|research/think/complex| Route_Reason["NVIDIA NIM: Reasoning with thinking=True"]
-        AI_Router -->|general chat| Groq_Chat["Groq LPU: llama-3.1-70b-versatile 300+ tokens/sec"]
-        AI_Router -->|no internet| Ollama_Loc["Ollama Local Fallback: llama3.1:8b"]
-        Groq_Chat -.->|Rate limit or Timeout| Gemini_Fallback["Google Gemini Pro API Fallback"]
-    end
-
-    %% ==========================================
-    %% 8. OUTPUT STREAMING & TTS
-    %% ==========================================
-    Action_Media & Action_Diag & Scrape_AI & Base64_Mail & YT_AI_Summarizer & Action_WA & Action_Cal & Action_Tasks & NIM_Vis & Route_Code & Route_Reason & Groq_Chat & Ollama_Loc & Gemini_Fallback -->|Text Response| Text_Sanitizer
-
-    subgraph "Phase 8: Asynchronous Streaming Voice Output"
-        Text_Sanitizer{"Strip * # _ emoji chars + isalnum check"} --> Sent_Chunker["Split by sentence delimiters . ! ?"]
-        Sent_Chunker --> TTS_Engine["edge-tts Communicate: en-US-GuyNeural"]
-        TTS_Engine -->|Stream audio bytes| Q["queue.Queue: async put"]
-        Q --> Pygame["pygame.mixer.music.load + play"]
-        Pygame --> Speakers(("Laptop Speakers Output"))
-        Pygame --> Save_Mem["After reply: save_memory() writes to MongoDB"]
-    end
-
-    %% ==========================================
-    %% 9. TRUE VOICE INTERRUPTION & LOOP BACK
-    %% ==========================================
-    Speakers -.->|Speaker audio bleeds into room| OWW_Model
-    OWW_Model -.->|Hears Jarvis mid-speech| Interrupt_Trigger["Wake Word fires Interrupt Signal"]
-
-    subgraph "Phase 9: Hardware Cutoff & Echo Prevention"
-        Interrupt_Trigger --> Flush_Q["queue.Queue: drain all pending sentences via get_nowait"]
-        Flush_Q --> Stop_Audio["pygame.mixer.music.stop - immediate hardware cutoff"]
-        Stop_Audio --> Reverb_Delay["time.sleep 0.8s - wait for acoustic echo to decay"]
-        Reverb_Delay --> Mic_Open
-    end
-
-    %% ==========================================
-    %% 10. SHUTDOWN
-    %% ==========================================
-    Heuristic_Router -->|shutdown / goodbye| Shutdown(("KeyboardInterrupt: Kill all threads & exit"))
+```
+Jarvis/
+├── agents/                     # ReAct autonomous planning & tool-calling agent
+│   ├── base.py                 # Abstract agent interface
+│   ├── planner.py              # Step-by-step goal decomposition & state tracker
+│   └── react_agent.py          # Native tool-calling ReAct execution loop
+├── api/                        # REST & Webhook endpoints
+│   ├── routes.py               # FastAPI router endpoints
+│   └── server.py               # ASGI application entrypoint
+├── app/                        # Application entrypoints & lifecycle management
+│   ├── bootstrap.py            # Component initialization & pre-flight checks
+│   └── main.py                 # Interactive shell & daemon lifecycle
+├── core/                       # Core configuration, schemas, and policy enforcement
+│   ├── config.py               # Pydantic Settings configuration loader
+│   ├── health_check.py         # Subsystem diagnostic engine (python jarvis.py health)
+│   ├── orchestrator.py         # Central session manager and event dispatcher
+│   ├── policy.py               # Level 0-4 risk authorization engine
+│   └── schemas.py              # Strongly-typed Pydantic schemas
+├── memory/                     # RAG, Vector Search, and Knowledge Graph
+│   ├── embedding.py            # all-MiniLM-L6-v2 CPU embedding pipeline (384-dim)
+│   ├── graph.py                # Personal entity relationship graph
+│   └── rag.py                  # User-scoped hybrid retrieval (dense + sparse)
+├── models/                     # Multi-provider model gateway and routing
+│   ├── gateway.py              # Unified gateway with circuit breaker & fallback
+│   ├── health.py               # Provider latency & error-rate tracker
+│   ├── router.py               # Intent classifier & optimal provider selector
+│   └── providers/              # Groq, NIM, DeepSeek, Gemini, and Ollama adapters
+├── notifications/              # Multi-channel notification delivery (Voice, Discord, Toast)
+│   └── manager.py              # Priority-based notification manager
+├── observability/              # Logging, performance tracing, and security auditing
+│   ├── audit.py                # Tamper-evident append-only security logger
+│   └── logger.py               # Structured JSON logger
+├── scheduler/                  # Background task automation & cron engine
+│   └── scheduler.py            # Persistent scheduler with atomic Supabase claim
+├── security/                   # Sanitization and prompt injection defense
+│   └── sanitizer.py            # Input/output sanitizer and untrusted data boundary wrapper
+├── storage/                    # Authoritative Supabase & SQLite resilience layer
+│   ├── base.py                 # Abstract storage interface
+│   ├── sqlite_cache.py         # Local offline SQLite cache & queue
+│   └── supabase.py             # Supabase PostgreSQL + pgvector + RLS client
+├── tests/                      # Verification suites
+│   ├── unit/                   # Hermetic unit tests (mocked providers/DB)
+│   └── integration/            # Live Supabase and end-to-end agent workflows
+├── tools/                      # The Claw - Typed Tool Registry
+│   ├── registry.py             # Tool decorator, metadata, and dispatcher
+│   ├── browser/                # Playwright headless browser automation
+│   ├── communication/          # Google Gmail & WhatsApp automation
+│   ├── files/                  # Windows filesystem search and management
+│   ├── media/                  # Spotify & Windows media controller
+│   ├── productivity/           # Google Calendar & Tasks integration
+│   ├── system/                 # psutil metrics and Windows OS actions
+│   ├── vision/                 # PyAutoGUI screen capture & OCR
+│   └── youtube/                # Video transcript extraction & summarization
+├── voice/                      # Voice input/output subsystems
+│   ├── audio.py                # PyAudio stream controller & amplitude normalization
+│   ├── stt.py                  # Groq whisper-large-v3-turbo + faster-whisper fallback
+│   ├── tts.py                  # edge-tts async streamer with Pygame playback
+│   └── wakeword.py             # openwakeword ONNX continuous wake detector
+├── jarvis.py                   # Root CLI entrypoint (start, health, test)
+├── pyproject.toml              # Project metadata & dependencies (v2.0.0)
+├── .env.example                # Sanitized configuration template
+└── README.md                   # Primary project documentation
 ```

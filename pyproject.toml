@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+
+[project]
+name = "jarvis"
+version = "2.0.0"
+description = "JARVIS: Autonomous Multimodal AI Agent OS"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.0.0",
+    "openai>=1.50.0",
+    "google-genai",
+    "ollama>=0.4.0",
+    "sentence-transformers>=3.0.0",
+    "faster-whisper",
+    "edge-tts",
+    "openwakeword",
+    "playwright>=1.40.0",
+    "psutil>=5.9.0",
+    "pyautogui>=0.9.54",
+    "pywhatkit>=5.4",
+    "youtube-transcript-api",
+    "discord.py>=2.3.0",
+    "SpeechRecognition>=3.10.0",
+    "PyAudio>=0.2.14",
+    "pygame>=2.6.0",
+    "certifi",
+    "httpx>=0.27.0",
+    "pytest>=8.0.0"
+]
+
+[project.scripts]
+jarvis = "app.main:run_jarvis"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+markers = [
+    "voice: Hardware microphone/TTS voice tests requiring audio devices",
+    "windows: Windows desktop GUI tests requiring active display",
+    "integration: End-to-end integration tests requiring external services"
+]
+addopts = "-m 'not voice and not windows and not integration'"
+
